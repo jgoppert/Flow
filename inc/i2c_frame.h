@@ -38,6 +38,7 @@
 
 typedef  struct i2c_frame
 {
+    uint8_t sonar_status;
     uint16_t frame_count;
     int16_t pixel_flow_x_sum;
     int16_t pixel_flow_y_sum;
@@ -57,6 +58,7 @@ typedef  struct i2c_frame
 
 typedef struct i2c_integral_frame
 {
+    uint8_t sonar_status;
     uint16_t frame_count_since_last_readout;
     int16_t pixel_flow_x_integral;
     int16_t pixel_flow_y_integral;
