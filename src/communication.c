@@ -441,6 +441,13 @@ void mavlink_send_uart_bytes(mavlink_channel_t chan, const uint8_t * ch, uint16_
 			VCP_put_char(ch[i]);
 		}
 	}
+
+	if (chan == MAVLINK_COMM_3)
+	{
+		/* send to I2C */
+		update_I2C_TX_buffer(ch, length);
+	}
+
 }
 
 /*

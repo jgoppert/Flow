@@ -60,14 +60,11 @@ char readI2CAddressOffset(void);
 
 static char offset = 0;
 uint8_t dataRX = 0;
-uint8_t txDataFrame1[2][I2C_FRAME_SIZE];
-uint8_t txDataFrame2[2][I2C_INTEGRAL_FRAME_SIZE];
+uint8_t txDataFrame1[2][MAVLINK_MAX_PACKET_LEN];
+uint16_t txLength[2];
 uint8_t publishedIndexFrame1 = 0;
-uint8_t publishedIndexFrame2 = 0;
 uint8_t notpublishedIndexFrame1 = 1;
-uint8_t notpublishedIndexFrame2 = 1;
 uint8_t readout_done_frame1 = 1;
-uint8_t readout_done_frame2 = 1;
 uint8_t stop_accumulation = 0;
 
 void i2c_init() {
@@ -137,7 +134,6 @@ void I2C1_EV_IRQHandler(void) {
 
 	//uint8_t dataRX;
 	static uint8_t txDataIndex1 = 0x00;
-	static uint8_t txDataIndex2 = 0x00;
 	static uint8_t rxDataIndex = 0x00;
 	switch (I2C_GetLastEvent(I2C1 )) {
 
@@ -158,15 +154,8 @@ void I2C1_EV_IRQHandler(void) {
 		rxDataIndex++;
 		//set Index
 		txDataIndex1 = dataRX;
-		if (dataRX > I2C_FRAME_SIZE) {
-			txDataIndex2 = dataRX - I2C_FRAME_SIZE;
-		}
-		else {
-			txDataIndex2 = 0;
-		}
-			//indicate sending
+		//indicate sending
 		readout_done_frame1 = 0;
-		readout_done_frame2 = 0;
 		break;
 	}
 	case I2C_EVENT_SLAVE_BYTE_TRANSMITTING :
@@ -176,24 +165,11 @@ void I2C1_EV_IRQHandler(void) {
 			I2C_SendData(I2C1,
 					txDataFrame1[publishedIndexFrame1][txDataIndex1]);
 			txDataIndex1++;
-		} else {
-			I2C_SendData(I2C1,
-					txDataFrame2[publishedIndexFrame2][txDataIndex2]);
-			if (txDataIndex2 < I2C_INTEGRAL_FRAME_SIZE) {
-				txDataIndex2++;
-			}
-
 		}
 
 		//check whether last byte is read frame1
 		if (txDataIndex1 >= (I2C_FRAME_SIZE-1)) {
 			readout_done_frame1 = 1;
-		}
-
-		//check whether last byte is read fram2 and reset accumulation
-		if (txDataIndex2 >= (I2C_INTEGRAL_FRAME_SIZE-1)) {
-			readout_done_frame2 = 1;
-			stop_accumulation = 1;
 		}
 
 		break;
@@ -221,126 +197,14 @@ void I2C1_ER_IRQHandler(void) {
 	}
 }
 
-void update_TX_buffer(float pixel_flow_x, float pixel_flow_y,
-		float flow_comp_m_x, float flow_comp_m_y, uint8_t qual,
-		float ground_distance, float gyro_x_rate, float gyro_y_rate,
-		float gyro_z_rate, int16_t gyro_temp) {
-	static uint16_t frame_count = 0;
-
-	i2c_frame f;
-	i2c_integral_frame f_integral;
-
-	f.frame_count = frame_count;
-	f.pixel_flow_x_sum = pixel_flow_x * 10.0f;
-	f.pixel_flow_y_sum = pixel_flow_y * 10.0f;
-	f.flow_comp_m_x = flow_comp_m_x * 1000;
-	f.flow_comp_m_y = flow_comp_m_y * 1000;
-	f.qual = qual;
-	f.ground_distance = ground_distance * 1000;
-
-	f.gyro_x_rate = gyro_x_rate * getGyroScalingFactor();
-	f.gyro_y_rate = gyro_y_rate * getGyroScalingFactor();
-	f.gyro_z_rate = gyro_z_rate * getGyroScalingFactor();
-	f.gyro_range = getGyroRange();
-
-	uint32_t time_since_last_sonar_update;
-
-	time_since_last_sonar_update = (get_boot_time_us()
-			- get_sonar_measure_time());
-
-	if (time_since_last_sonar_update < 255 * 1000) {
-		f.sonar_timestamp = time_since_last_sonar_update / 1000; //convert to ms
-	} else {
-		f.sonar_timestamp = 255;
-	}
-
-	static float accumulated_flow_x = 0;
-	static float accumulated_flow_y = 0;
-	static uint16_t accumulated_framecount = 0;
-	static uint16_t accumulated_quality = 0;
-	static float accumulated_gyro_x = 0;
-	static float accumulated_gyro_y = 0;
-	static float accumulated_gyro_z = 0;
-	static uint32_t integration_timespan = 0;
-	static uint32_t lasttime = 0;
-
-	/* calculate focal_length in pixel */
-	const float focal_length_px = ((global_data.param[PARAM_FOCAL_LENGTH_MM])
-			/ (4.0f * 6.0f) * 1000.0f); //original focal lenght: 12mm pixelsize: 6um, binning 4 enabled
-
-	// reset if readout has been performed
-	if (stop_accumulation == 1) {
-
-		//debug output
-//		mavlink_msg_optical_flow_send(MAVLINK_COMM_2, get_boot_time_us(),
-//				global_data.param[PARAM_SENSOR_ID], accumulated_flow_x * 10.0f,
-//				accumulated_gyro_x * 10.0f, integration_timespan,
-//				accumulated_framecount, (uint8_t) (accumulated_quality / accumulated_framecount), ground_distance);
-
-		integration_timespan = 0;
-		accumulated_flow_x = 0;			 //mrad
-		accumulated_flow_y = 0;			 //mrad
-		accumulated_framecount = 0;
-		accumulated_quality = 0;
-		accumulated_gyro_x = 0;			 //mrad
-		accumulated_gyro_y = 0;			 //mrad
-		accumulated_gyro_z = 0;			 //mrad
-		stop_accumulation = 0;
-	}
-
-	//accumulate flow and gyro values between sucessive I2C readings
-	//update only if qual !=0
-	if (qual > 0) {
-		uint32_t deltatime = (get_boot_time_us() - lasttime);
-		integration_timespan += deltatime;
-		accumulated_flow_x += pixel_flow_y * 1000.0f / focal_length_px * 1.0f;//mrad axis swapped to align x flow around y axis
-		accumulated_flow_y += pixel_flow_x * 1000.0f / focal_length_px * -1.0f;	//mrad
-		accumulated_framecount++;
-		accumulated_quality += qual;
-		accumulated_gyro_x += gyro_x_rate * deltatime * 0.001f;	//mrad  gyro_x_rate * 1000.0f*deltatime/1000000.0f;
-		accumulated_gyro_y += gyro_y_rate * deltatime * 0.001f;	//mrad
-		accumulated_gyro_z += gyro_z_rate * deltatime * 0.001f;	//mrad
-	}
-
-	//update lasttime
-	lasttime = get_boot_time_us();
-
-	f_integral.frame_count_since_last_readout = accumulated_framecount;
-	f_integral.gyro_x_rate_integral = accumulated_gyro_x * 10.0f;	//mrad*10
-	f_integral.gyro_y_rate_integral = accumulated_gyro_y * 10.0f;	//mrad*10
-	f_integral.gyro_z_rate_integral = accumulated_gyro_z * 10.0f; //mrad*10
-	f_integral.pixel_flow_x_integral = accumulated_flow_x * 10.0f; //mrad*10
-	f_integral.pixel_flow_y_integral = accumulated_flow_y * 10.0f; //mrad*10
-	f_integral.integration_timespan = integration_timespan;     //microseconds
-	f_integral.ground_distance = ground_distance * 1000;		    //mmeters
-	f_integral.sonar_timestamp = time_since_last_sonar_update;  //microseconds
-	f_integral.qual =
-			(uint8_t) (accumulated_quality / accumulated_framecount); //0-255 linear quality measurement 0=bad, 255=best
-	f_integral.gyro_temperature = gyro_temp;//Temperature * 100 in centi-degrees Celsius
-
-	notpublishedIndexFrame1 = 1 - publishedIndexFrame1; // choose not the current published 1 buffer
-	notpublishedIndexFrame2 = 1 - publishedIndexFrame2; // choose not the current published 2 buffer
-
-	// fill I2C transmitbuffer1 with frame1 values
-	memcpy(&(txDataFrame1[notpublishedIndexFrame1]),
-		&f, I2C_FRAME_SIZE);
-
-	// fill I2C transmitbuffer2 with frame2 values
-	memcpy(&(txDataFrame2[notpublishedIndexFrame2]),
-		&f_integral, I2C_INTEGRAL_FRAME_SIZE);
+void update_I2C_TX_buffer(const uint8_t * ch, uint16_t len) {
+	memcpy(txDataFrame1[notpublishedIndexFrame1], ch, len);
+	txLength[notpublishedIndexFrame1] = len;
 
 	//swap buffers frame1 if I2C bus is idle
 	if (readout_done_frame1) {
 		publishedIndexFrame1 = 1 - publishedIndexFrame1;
 	}
-
-	//swap buffers frame2 if I2C bus is idle
-	if (readout_done_frame2) {
-		publishedIndexFrame2 = 1 - publishedIndexFrame2;
-	}
-
-	frame_count++;
-
 }
 
 char readI2CAddressOffset(void) {

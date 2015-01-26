@@ -41,6 +41,7 @@
 #ifndef I2C_H_
 #define I2C_H_
 #include <inttypes.h>
+#include "mavlink_bridge_header.h"
 
 #define I2C1_OWNADDRESS_1_BASE 0x42 //7bit base address
 /**
@@ -48,8 +49,7 @@
  */
 
 void i2c_init(void);
-void update_TX_buffer(float pixel_flow_x, float pixel_flow_y, float flow_comp_m_x, float flow_comp_m_y, uint8_t qual,
-        float ground_distance, float x_rate, float y_rate, float z_rate, int16_t gyro_temp);
+void update_I2C_TX_buffer(const uint8_t * ch, uint16_t len);
 char i2c_get_ownaddress1(void);
 #endif /* I2C_H_ */
 
